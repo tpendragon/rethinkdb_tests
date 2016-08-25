@@ -1,0 +1,83 @@
+#!/usr/bin/env ruby
+require 'rethinkdb'
+require 'pry-byebug'
+require 'benchmark'
+include RethinkDB::Shortcuts
+
+def connection
+  @connection ||= r.connect(host: "localhost", port: 28015)
+end
+
+def setup_database
+  begin
+    r.db_create("tests").run(connection)
+  rescue RethinkDB::RqlRuntimeError => err
+    puts "Database `tests` already exists."
+  end
+  begin
+    r.db("tests").table_create("resources").run(connection)
+  rescue RethinkDB::RqlRuntimeError => err
+    puts "Table `resources` already exists."
+  end
+end
+
+def context
+  {
+    "dc" => "http://purl.org/dc/terms/",
+    "pcdm" => "http://pcdm.org/models#"
+  }
+end
+
+def collection_node
+  {
+    "@context": context,
+    "@type": "pcdm:Collection",
+    "dc:title": "Collection"
+  }
+end
+
+def member_node(title)
+  {
+    "@context": context,
+    "@type": "pcdm:Object",
+    "dc:title": title
+  }
+end
+
+setup_database
+id = nil
+members_to_create = 10000
+create_collection = Benchmark.measure("Create Collection") do
+  result = r.db("tests").table('resources').insert([collection_node]).run(connection)
+  id = result["generated_keys"].first
+end
+member_ids = nil
+create_members = Benchmark.measure("Create Members") do
+  members = members_to_create.times.map do |member_number|
+    member_node("Member ##{member_number}")
+  end
+  result = r.db("tests").table("resources").insert(members).run(connection)
+  member_ids = result["generated_keys"]
+end
+associate_members = Benchmark.measure("Associate Members") do
+  r.db("tests").table("resources").get(id).update("pcdm:hasMember" => member_ids).run(connection)
+end
+member_ids_retrieved = nil
+get_collection = Benchmark.measure("Get Collection") do
+  result = r.db("tests").table("resources").get(id).run(connection)
+  member_ids_retrieved = result["pcdm:hasMember"]
+  raise "Problem" unless member_ids_retrieved == member_ids
+end
+update_collection_title = Benchmark.measure("Update Collection Title") do
+  r.db("tests").table("resources").get(id).update("dc:title" => "Banana").run(connection)
+end
+puts "Time to create collection:"
+puts create_collection
+puts "Time to create #{members_to_create} members:"
+puts create_members
+puts "Time to associate members to collection:"
+puts associate_members
+puts "Time to get collection:"
+puts get_collection
+puts "Time to update collection title:"
+puts update_collection_title
