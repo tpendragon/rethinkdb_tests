@@ -16,6 +16,8 @@ def setup_database
   end
   begin
     r.db("tests").table_create("resources").run(connection)
+    r.db("tests").table('resources').index_create('pcdm:hasMember', multi: true).run(connection)
+    r.db("tests").table('resources').index_create('@type', multi: true).run(connection)
   rescue RethinkDB::RqlRuntimeError => err
     puts "Table `resources` already exists."
   end
@@ -31,7 +33,7 @@ end
 def collection_node
   {
     "@context": context,
-    "@type": "pcdm:Collection",
+    "@type": ["pcdm:Collection"],
     "dc:title": "Collection"
   }
 end
@@ -39,17 +41,20 @@ end
 def member_node(title)
   {
     "@context": context,
-    "@type": "pcdm:Object",
+    "@type": ["pcdm:Object"],
     "dc:title": title
   }
 end
 
 setup_database
-id = nil
 members_to_create = 10000
+collections_to_create = 500
+collection_ids = nil
 create_collection = Benchmark.measure("Create Collection") do
-  result = r.db("tests").table('resources').insert([collection_node]).run(connection)
-  id = result["generated_keys"].first
+  result = r.db("tests").table('resources').insert(
+    collections_to_create.times.map{|x| collection_node}
+  ).run(connection)
+  collection_ids = result["generated_keys"]
 end
 member_ids = nil
 create_members = Benchmark.measure("Create Members") do
@@ -60,16 +65,24 @@ create_members = Benchmark.measure("Create Members") do
   member_ids = result["generated_keys"]
 end
 associate_members = Benchmark.measure("Associate Members") do
-  r.db("tests").table("resources").get(id).update("pcdm:hasMember" => member_ids).run(connection)
+  collection_ids.each do |id|
+    r.db("tests").table("resources").get(id).update("pcdm:hasMember" => member_ids.sample(500)).run(connection)
+  end
 end
 member_ids_retrieved = nil
 get_collection = Benchmark.measure("Get Collection") do
-  result = r.db("tests").table("resources").get(id).run(connection)
+  result = r.db("tests").table("resources").get(collection_ids.first).run(connection)
   member_ids_retrieved = result["pcdm:hasMember"]
-  raise "Problem" unless member_ids_retrieved == member_ids
+  puts member_ids_retrieved.length
 end
 update_collection_title = Benchmark.measure("Update Collection Title") do
-  r.db("tests").table("resources").get(id).update("dc:title" => "Banana").run(connection)
+  r.db("tests").table("resources").get(collection_ids.first).update("dc:title" => "Banana").run(connection)
+end
+
+query_collections = Benchmark.measure("Query collections") do
+  collections = r.db("tests").table("resources").get_all(member_ids.first, {index: "pcdm:hasMember"}).run(connection)
+  collections = collections.to_a
+  puts "Found #{collections.length} collections which collect #{member_ids.first}"
 end
 puts "Time to create collection:"
 puts create_collection
@@ -81,3 +94,5 @@ puts "Time to get collection:"
 puts get_collection
 puts "Time to update collection title:"
 puts update_collection_title
+puts "Time to get how many collections collect the first member:"
+puts query_collections
