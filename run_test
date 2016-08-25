@@ -66,7 +66,7 @@ create_members = Benchmark.measure("Create Members") do
 end
 associate_members = Benchmark.measure("Associate Members") do
   collection_ids.each do |id|
-    r.db("tests").table("resources").get(id).update("pcdm:hasMember" => member_ids.sample(500)).run(connection)
+    r.db("tests").table("resources").get(id).update("pcdm:hasMember" => member_ids.sample(1000)).run(connection)
   end
 end
 member_ids_retrieved = nil
